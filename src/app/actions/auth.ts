@@ -3,14 +3,23 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import {
+  loginSchema,
+  registerSchema,
+  resetPasswordSchema,
+  createProfileSchema,
+  formatValidationError,
+} from '@/lib/validations'
 
 export async function login(formData: FormData) {
+  const parsed = loginSchema.safeParse({
+    email: formData.get('email'),
+    password: formData.get('password'),
+  })
+  if (!parsed.success) return { error: formatValidationError(parsed.error) }
+
   const supabase = await createClient()
-
-  const email = formData.get('email') as string
-  const password = formData.get('password') as string
-
-  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  const { error } = await supabase.auth.signInWithPassword(parsed.data)
 
   if (error) {
     return { error: error.message }
@@ -21,14 +30,16 @@ export async function login(formData: FormData) {
 }
 
 export async function register(formData: FormData) {
+  const parsed = registerSchema.safeParse({
+    email: formData.get('email'),
+    password: formData.get('password'),
+  })
+  if (!parsed.success) return { error: formatValidationError(parsed.error) }
+
   const supabase = await createClient()
-
-  const email = formData.get('email') as string
-  const password = formData.get('password') as string
-
   const { error } = await supabase.auth.signUp({
-    email,
-    password,
+    email: parsed.data.email,
+    password: parsed.data.password,
     options: {
       emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
     },
@@ -65,11 +76,13 @@ export async function loginWithGoogle(): Promise<void> {
 }
 
 export async function resetPassword(formData: FormData) {
+  const parsed = resetPasswordSchema.safeParse({
+    email: formData.get('email'),
+  })
+  if (!parsed.success) return { error: formatValidationError(parsed.error) }
+
   const supabase = await createClient()
-
-  const email = formData.get('email') as string
-
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+  const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
     redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?type=recovery`,
   })
 
@@ -88,20 +101,23 @@ export async function logout() {
 }
 
 export async function createProfile(formData: FormData) {
+  const parsed = createProfileSchema.safeParse({
+    username: formData.get('username'),
+    display_name: formData.get('display_name'),
+  })
+  if (!parsed.success) return { error: formatValidationError(parsed.error) }
+
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: '認証が必要です' }
 
-  const username = formData.get('username') as string
-  const displayName = formData.get('display_name') as string
-
   const { error } = await supabase
     .from('profiles')
     .insert({
       id: user.id,
-      username,
-      display_name: displayName,
+      username: parsed.data.username,
+      display_name: parsed.data.display_name,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
     })
 

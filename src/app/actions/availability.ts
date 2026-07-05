@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { updateAvailabilitySchema, formatValidationError } from '@/lib/validations'
 
 type SlotInput = {
   day_of_week: number
@@ -14,11 +15,18 @@ export async function updateAvailability(
   userId: string,
   slots: SlotInput[]
 ) {
+  const parsed = updateAvailabilitySchema.safeParse({
+    schedule_id: scheduleId,
+    user_id: userId,
+    slots,
+  })
+  if (!parsed.success) return { error: formatValidationError(parsed.error) }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: '認証が必要です' }
 
-  let finalScheduleId = scheduleId
+  let finalScheduleId = parsed.data.schedule_id
 
   if (!finalScheduleId) {
     // Create default schedule
@@ -45,13 +53,15 @@ export async function updateAvailability(
 
   if (deleteError) return { error: deleteError.message }
 
-  if (slots.length > 0) {
+  if (parsed.data.slots.length > 0) {
     const { error: insertError } = await supabase
       .from('availability_slots')
       .insert(
-        slots.map((slot) => ({
+        parsed.data.slots.map((slot) => ({
           schedule_id: finalScheduleId as string,
-          ...slot,
+          day_of_week: slot.day_of_week,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
         }))
       )
 

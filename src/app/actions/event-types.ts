@@ -3,28 +3,38 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import {
+  createEventTypeSchema,
+  updateEventTypeSchema,
+  toggleEventTypeSchema,
+  deleteEventTypeSchema,
+  formatValidationError,
+} from '@/lib/validations'
 
 export async function createEventType(formData: FormData) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: '認証が必要です' }
-
-  const data = {
-    user_id: user.id,
-    slug: formData.get('slug') as string,
-    title: formData.get('title') as string,
+  const parsed = createEventTypeSchema.safeParse({
+    slug: formData.get('slug'),
+    title: formData.get('title'),
     description: (formData.get('description') as string) || null,
     duration_minutes: Number(formData.get('duration_minutes')),
     buffer_before_min: Number(formData.get('buffer_before_min') ?? 0),
     buffer_after_min: Number(formData.get('buffer_after_min') ?? 0),
     min_notice_hours: Number(formData.get('min_notice_hours') ?? 0),
     future_booking_days: Number(formData.get('future_booking_days') ?? 60),
-    location_type: formData.get('location_type') as 'zoom' | 'google_meet' | 'teams' | 'phone' | 'in_person' | 'custom',
+    location_type: formData.get('location_type'),
     location_value: (formData.get('location_value') as string) || null,
     color: (formData.get('color') as string) || '#3B82F6',
-  }
+  })
+  if (!parsed.success) return { error: formatValidationError(parsed.error) }
 
-  const { error } = await supabase.from('event_types').insert(data)
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: '認証が必要です' }
+
+  const { error } = await supabase.from('event_types').insert({
+    user_id: user.id,
+    ...parsed.data,
+  })
 
   if (error) {
     if (error.code === '23505') {
@@ -38,46 +48,56 @@ export async function createEventType(formData: FormData) {
 }
 
 export async function updateEventType(id: string, formData: FormData) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: '認証が必要です' }
-
-  const data = {
-    title: formData.get('title') as string,
+  const parsed = updateEventTypeSchema.safeParse({
+    id,
+    title: formData.get('title'),
     description: (formData.get('description') as string) || null,
     duration_minutes: Number(formData.get('duration_minutes')),
     buffer_before_min: Number(formData.get('buffer_before_min') ?? 0),
     buffer_after_min: Number(formData.get('buffer_after_min') ?? 0),
     min_notice_hours: Number(formData.get('min_notice_hours') ?? 0),
     future_booking_days: Number(formData.get('future_booking_days') ?? 60),
-    location_type: formData.get('location_type') as 'zoom' | 'google_meet' | 'teams' | 'phone' | 'in_person' | 'custom',
+    location_type: formData.get('location_type'),
     location_value: (formData.get('location_value') as string) || null,
     color: (formData.get('color') as string) || '#3B82F6',
     is_active: formData.get('is_active') === 'true',
-  }
+  })
+  if (!parsed.success) return { error: formatValidationError(parsed.error) }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: '認証が必要です' }
+
+  const { id: validatedId, ...updateData } = parsed.data
 
   const { error } = await supabase
     .from('event_types')
-    .update(data)
-    .eq('id', id)
+    .update(updateData)
+    .eq('id', validatedId)
     .eq('user_id', user.id)
 
   if (error) return { error: error.message }
 
   revalidatePath('/dashboard/event-types')
-  revalidatePath(`/dashboard/event-types/${id}`)
+  revalidatePath(`/dashboard/event-types/${validatedId}`)
   return { success: true }
 }
 
 export async function toggleEventType(id: string, isActive: boolean) {
+  const parsed = toggleEventTypeSchema.safeParse({
+    id,
+    is_active: isActive,
+  })
+  if (!parsed.success) return { error: formatValidationError(parsed.error) }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: '認証が必要です' }
 
   const { error } = await supabase
     .from('event_types')
-    .update({ is_active: isActive })
-    .eq('id', id)
+    .update({ is_active: parsed.data.is_active })
+    .eq('id', parsed.data.id)
     .eq('user_id', user.id)
 
   if (error) return { error: error.message }
@@ -87,6 +107,9 @@ export async function toggleEventType(id: string, isActive: boolean) {
 }
 
 export async function deleteEventType(id: string) {
+  const parsed = deleteEventTypeSchema.safeParse({ id })
+  if (!parsed.success) return { error: formatValidationError(parsed.error) }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: '認証が必要です' }
@@ -95,7 +118,7 @@ export async function deleteEventType(id: string) {
   const { count } = await supabase
     .from('bookings')
     .select('*', { count: 'exact', head: true })
-    .eq('event_type_id', id)
+    .eq('event_type_id', parsed.data.id)
     .eq('status', 'confirmed')
 
   if (count && count > 0) {
@@ -105,7 +128,7 @@ export async function deleteEventType(id: string) {
   const { error } = await supabase
     .from('event_types')
     .delete()
-    .eq('id', id)
+    .eq('id', parsed.data.id)
     .eq('user_id', user.id)
 
   if (error) return { error: error.message }
